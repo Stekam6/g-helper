@@ -24,34 +24,46 @@ jobs:
       run: |
         dotnet publish app/GHelper.sln --configuration Release --runtime win-x64 -p:PublishSingleFile=true --no-self-contained
 
-    - name: Upload unsigned EXE
-      id: upload-unsigned
+    - name: Upload publish output
       uses: actions/upload-artifact@v4
       with:
-        path: app/bin/x64/Release/net8.0-windows/win-x64/publish/GHelper.exe
+       name: publish-output
+       path: app/bin/x64/Release/net8.0-windows/win-x64/publish/
 
-    - id: sign-exe
-      uses: signpath/github-action-submit-signing-request@v1.1
-      with:
-        api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-        organization-id: ${{ secrets.SIGNPATH_ORG_ID }}
-        project-slug: ${{ secrets.SIGNPATH_PROJECT }}
-        signing-policy-slug: ${{ secrets.SIGNPATH_POLICY }}
-        github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
-        wait-for-completion: true
-        output-artifact-directory: './signed'
+  dynamic-detection:
+      runs-on: ubuntu-latest
+      needs: release
+      
+      steps:
+        - uses: actions/checkout@v4
 
-    - name: Create ZIP from signed EXE
-      run: powershell Compress-Archive ./signed/GHelper.exe ./signed/GHelper.zip
-
-    - name: Upload signed EXE and ZIP
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: |
-        gh release upload "${{ github.event.release.tag_name }}" ./signed/GHelper.exe ./signed/GHelper.zip --clobber
-    - name: Generate SLSA build provenance attestation
-      uses: actions/attest-build-provenance@v2
-      with:
-        subject-path: |
-          ./signed/GHelper.exe
-          ./signed/GHelper.zip
+        - name: Setup Java 21 (Temurin)
+          uses: actions/setup-java@v4
+          with:
+            distribution: 'temurin'
+            java-version: '21'
+    
+        # 👉 Artifact laden
+        - name: Download publish output
+          uses: actions/download-artifact@v4
+          with:
+            name: publish-output
+            path: ./publish
+    
+        # 👉 Syft installieren
+        - name: Install Syft
+          run: |
+            curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+    
+        # 👉 Detector
+        - name: Run detector
+          run: java -jar dynamicDetection/detectionSystem-1.0-SNAPSHOT-all.jar . #/publish
+    
+        # 👉 Ergebnisse speichern
+        - name: Upload detection results
+          uses: actions/upload-artifact@v4
+          with:
+            name: detection-results
+            path: |
+              dynamic-detection-results.xlsx
+              sbom-output.json
